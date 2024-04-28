@@ -1,0 +1,818 @@
+---
+title: "Job placement gender gap and prediction🧑‍🎓"
+author: "Giulio Fabbri"
+output: 
+  html_document:
+    theme: readable
+    toc: true
+    toc_float: false
+  
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+```{r}
+job<- read.csv("C:\\Users\\Utente\\OneDrive\\Desktop\\esami fatti\\data analytics project\\Job_Placement_Data.csv")
+```
+
+## Introduction
+
+The proposed dataset shows 215 applicants who were or were not hired, given 13 variables related to their gender and study activity.
+
+The purposes of this analysis involve three main research questions:
+
+1.  How is the phenomenon structured?
+
+2.  Is there a gender gap in hiring?
+
+3.  Can we create a predictive model for future candidates?
+
+## Data Dictionary
+
+gender: Gender of the candidate;
+
+ssc_percentage : Senior secondary exams percentage (10th Grade);
+
+ssc_board : Board of education for ssc exams;
+
+hsc_percentage : Higher secondary exams percentage (12th Grade);
+
+hsc_borad : Board of education for hsc exams;
+
+hsc_subject : Subject of study for hsc;
+
+degree_percentage : Percentage of marks in undergrad degree;
+
+undergrad_degree : Undergrad degree majors;
+
+work_experience : Past work experience ;
+
+emp_test_percentage : Aptitude test percentage;
+
+specialization : Postgrad degree majors - (MBA specialization);
+
+mba_percent : Percentage of marks in MBA degree;
+
+status(TARGET) : Status of placement.
+Placed / Not Placed.
+
+R-Packages used:
+
+```{r,warning=FALSE,results='hide', message=FALSE}
+library(rpart)
+library(rpart.plot)
+library(ggplot2)
+library(gridExtra)
+library(corrplot)
+library(rpart)
+library(caret)
+library(randomForest)
+library(huxtable)
+require(FactoMineR)
+```
+
+# 1. How is the phenomenon structured?
+
+In this first part we ll try to look at our data and understand their structure and how they behave.
+
+```{r }
+
+job$gender<- as.factor(job$gender)
+job$ssc_board<- as.factor(job$ssc_board)
+job$hsc_board<- as.factor(job$hsc_board)
+job$hsc_subject<- as.factor(job$hsc_subject)
+job$undergrad_degree<- as.factor(job$undergrad_degree)
+job$work_experience<- as.factor(job$work_experience)
+job$specialisation<- as.factor(job$specialisation)
+job$status<- as.factor(job$status)
+
+str(job)
+```
+
+```{r}
+summary(job)
+```
+
+From the summary we can easily notice that there are no unavailable observations (NA), so we can luckily work on a complete dataset.
+
+The first difficulty met on the analysis process is discover that the dataset sample has a different number of males and female on it.
+The difference is consistent (76 females and 139 males) but still acceptable for making our analysis.
+As we will explain better below, we are probably talking about observations made in India, Pakistan or Bangladesh, so we need to remind that this difference in our dataset is due to the fact that women in those countries are still less scholarized than men.
+
+## 1.1 Academic Scores Distribution
+
+Let s now have a look at the distribution of the marks in all the tests that our dataset takes in consideration.
+
+```{r,}
+par(mfrow=c(2,2))
+
+hist_ssc<-hist(job$ssc_percentage, xlab = 'ssc_percentage', main = 'Histogram ssc_percentage',xlim = c(30,100), ylim= c(0,70))
+
+hist_hsc<-hist(job$hsc_percentage, xlab = 'hsc_percentage', main = 'Histogram hsc_percentage',xlim = c(30,100), ylim= c(0,70))
+
+hist_mba<-hist(job$mba_percent,  xlab = 'mba_percentage', main = 'Histogram mba_percentage', xlim = c(30,100), ylim= c(0,70))
+
+hist_degree<-hist(job$degree_percentage,  xlab = 'degree_percentage', main = 'Histogram degree_percentage',xlim = c(30,100), ylim= c(0,70))
+
+
+```
+
+The histograms show how all scores follow a Gaussian distribution.
+The maximum frequencies are between 60-70% in each case, and the distributions tend to be positively skewed, as we expected from academic scores.
+However, we can note some peculiarities:
+
+
+-From the second histogram we can see that hsc_percentage has a similar mean as ssc_percentage, but with a higher  frequency and a wider values interval.
+Regarding this case, it is worth investigating the presence of outliers, since some values seem to be detached from the distribution.
+
+-Mba_percentage distribution is narrower and tends toward lower instead of higher grades.
+
+-there could be an outlier as top score in the degree_percentage variable.
+
+To spot the presence of any outliers in the data we use boxplots of the variables we are interested in.
+
+```{r,results='hide',}
+job[job$degree_percentage==max(job$degree_percentage),]
+```
+
+```{r,}
+numerical<- c( "ssc_percentage", "hsc_percentage", "degree_percentage", "emp_test_percentage", "mba_percent"  )
+boxplot(job[,numerical], main ='Test percentage score boxplot', names = c("ssc", "hsc", "degree", "empaty", "mba" ))
+```
+
+From here we can see that in hsc_percentage there are several extreme values, for both lower and higher scores.
+However, We can easily understand that the higher scores are acceptable results because it could be reliable that someone had a better mark, and the percentage doesn t exceed 100%.
+
+Instead, we should try to understand better the lower results in hsc because they are under the 50%.
+The dataset description doesn t tell us anything about which country we are talking about, but we can make the hypotesis that the data are from India, Pakistan or Bangladesh, given the fact that these type of tests are done in those countries and that there the minimum score for passing the test is 35%.
+
+```{r}
+#check that all the scores are above 35%
+min(boxplot.stats(job$hsc_percentage)$out)
+```
+
+Since all scores are above 35% our hypothesis is consistent and we can consider all data as reliable.
+
+Now, we still need to check the distribution of the emp test.
+
+```{r, }
+hist(job$emp_test_percentage,  xlab = 'emp_test_percentage', main = 'Histogram emp_test_percentage')
+```
+
+For the first time, we can notice that this test doesn t have a Gaussian distribution as all the others.
+
+## 1.2 Gender Distribution
+
+We should also check the distribution of males and females between status, work experience, boards and subjects.
+
+```{r }
+colnames(job) <- make.unique(names(job))
+
+plot_work_exp<-ggplot(job, aes(x=work_experience, fill=gender))+
+  geom_bar(position = "dodge")+
+  labs(title='Work experience by gender')
+
+plot_status<-ggplot(job, aes(x=status, fill=gender)) +
+  geom_bar(position = "dodge")+
+  labs(title='Status by gender')
+
+plot_job_gender = grid.arrange(plot_status,plot_work_exp, ncol=2)
+
+```
+
+As mentioned earlier, there is a different number of males and females in the dataset.
+The bar graphs therefore do not explain the relative frequencies by gender, but these can be well explained by relative frequency tables
+
+```{r}
+#table(job$gender,job$status)
+
+rownames = c("F", "M")
+colnames = c("Not Placed", "Placed")
+
+freq<-c((28/76)*100, (48/76)*100, (39/139)*100, (100/139)*100)
+round_freq<-round(freq,0)
+
+x<-paste(round_freq,rep("%",4),sep = "")
+N <- matrix( x , nrow = 2 , byrow = TRUE, dimnames = list(rownames, colnames))
+
+print(N, quote = FALSE)
+```
+
+From this contingency table (in relative values) and the histogram, we can see that, in percentage, more man are placed, but we still don't know anything about their scholastic background, so we can't make any assumption.
+
+We should also check the percentage of males and females that had a previous working experience.
+
+```{r}
+#table(job$gender,job$work_experience)
+
+
+rownames = c("F", "M")
+colnames = c("No", "Yes")
+
+freq2=c((54/76)*100, (22/76)*100, (87/139)*100, (52/139)*100)
+freq2=round(freq2,0)
+x<-paste(freq2,rep("%",4),sep ="" )
+
+N <- matrix(x, nrow = 2, byrow = TRUE, dimnames = list(rownames, colnames))
+print(N, quote = FALSE)
+```
+
+Both males and females have mostly had no work experience, especially the latter.
+Given the fact that from literature we know that work experience is a driver for getting placed in a job we should consider this variable (in the regression for analyzing gender gap we should keep this factor constant).
+
+We should look at the boards now, and how gender are distributed inside them.
+
+```{r }
+boardssc<-ggplot(job, aes(x=ssc_board, fill=gender)) + geom_bar(position = "dodge")+labs(title='ssc_board by gender')
+boardhsc<-ggplot(job, aes(x=hsc_board, fill=gender)) + geom_bar(position = "dodge")+labs(title='hsc_board by gender')
+
+plot_board_gender = grid.arrange(boardssc,boardhsc, ncol=2)
+```
+
+```{r }
+#table(job$gender,job$ssc_board)
+
+rownames = c("F", "M")
+colnames = c("Central ssc", "Others ssc")
+N <- matrix(c(42/76, 34/76, 74/139, 65/139), nrow = 2, byrow = TRUE, dimnames = list(rownames, colnames))
+print(N)
+```
+
+```{r }
+
+#table(job$gender,job$hsc_board)
+
+rownames = c("F", "M")
+colnames = c("Central hsc", "Others hsc")
+N <- matrix(c(33/76, 43/76, 51/139, 88/139), nrow = 2, byrow = TRUE, dimnames = list(rownames, colnames))
+print(N)
+```
+
+From here we can see that Central boards are more chosen for the ssc, while for hsc are not.
+Regarding males and females we see that, in percentage, there s not a big difference.
+
+We could make the hypothesis that the board in not relevant for our analysis, so we should decide if drop the variable or not.
+
+In order to understand that, we perform a Chi-squared test to see if the two variables are independent or not.
+
+```{r }
+#ssc_board and hsc_board are higly correlated variable(low pvalue)
+#so we can just use one of them
+
+chisq.test(job$ssc_board,job$hsc_board)
+```
+
+From this test we can see that ssc board and hsc board are highly correlated because the p-value is low.
+We now proceed to another Chi_squared test to asses the dependency of the boards with the status variable.
+
+```{r }
+#ssc_board e job status completely idependent(hig pvalue)
+#so if placement is target variable we can discard both ssc and hsc board
+
+chisq.test(job$ssc_board,job$status)
+```
+P-value is high, and we can therefore confidently say that the board and status variables are independent, and so to simplify the analysis we drop the ssc_board and hsc_board variables.  
+
+```{r}
+job2<- job[,-c(3, 5)]
+head(job2)
+```
+
+This dataset (job2) will be our referring dataset from now on.
+
+We should now pass at analyzing the gender distribution between the subjects.
+
+```{r }
+
+ggplot(job2, aes(x=undergrad_degree, fill=gender)) + geom_bar(position = "dodge")+labs(title= 'Undergrad_degree by gender')
+
+```
+
+We can see that for both males and females "Communication and management" is the most frequent choice and only in "Others" there seem to be more females.
+
+```{r }
+#table(job$gender,job$undergrad_degree)
+
+rownames = c("F", "M")
+colnames = c("comm&Mgmt", "Others", 'Sci&tech')
+N <- matrix(c(53/76, 6/76, 17/76, 92/139, 5/139, 42/139), nrow = 2, byrow = TRUE, dimnames = list(rownames, colnames))
+print(N)
+```
+
+From this table we can see that, in percentage, more females chose "Communication and management" and "Others", while males are more oriented to "Science and technologies".
+Given the fact that from literature we know that study field is a driver for getting placed in a job we should consider this variable (in the regression for analyzing gender gap we should keep this factor constant).
+
+```{r }
+
+ggplot(job2, aes(x=specialisation, fill=gender)) + geom_bar(position = "dodge")+labs(title= 'Specialisation by gender')
+
+```
+
+In this histogram we see that females are divided almost equally between the two specializations, while males preferred the "Market and finance" one.
+
+## 1.3 Correlation study
+
+In this section, we want to check if there could be a correlation between the marks of all the tests.
+
+We chose to look at the correlation between a mark and its successor, because looking at every combination would be computational expensive, and logically it seemed to be the best option.
+
+```{r , warning=FALSE}
+a<-qplot(ssc_percentage,hsc_percentage, data = job2, color=gender)
+b<-qplot(hsc_percentage, degree_percentage, data = job2, color=gender)
+c<-qplot(degree_percentage,emp_test_percentage, data = job2, color=gender)
+d<-qplot(emp_test_percentage, mba_percent, data = job2, color=gender)
+
+plot_mark = grid.arrange(a,b,c,d, ncol=2, nrow=2)
+```
+
+With those scatterplots we can t assume almost any correlation between the results of the various tests, maybe we can examine a slight one between hsc and degree marks.
+
+Looking at males and females distribution we can t make any preliminary assumption either, with the exception that females tend to have higher results than males in mba test respect to emp test.
+
+```{r , warning= FALSE}
+e<-qplot(ssc_percentage,hsc_percentage, data = job2, color=undergrad_degree, 
+         xlim = c(25, 100), ylim= c(25,100))
+
+f<-qplot(hsc_percentage,degree_percentage, data = job2, color=undergrad_degree,   
+         xlim = c(40, 100), ylim= c(40,100))
+g<-qplot(degree_percentage,emp_test_percentage, data = job2, color=undergrad_degree, 
+          xlim = c(40, 100), ylim= c(40,100))
+h<-qplot(emp_test_percentage,mba_percent, data = job2, color=undergrad_degree, 
+          xlim = c(40, 100), ylim= c(40,100))
+
+plot_mark = grid.arrange(e,f,g,h, ncol=2, nrow=2)
+```
+
+From those scatterplots we can t assume anything about the choice of the subject based on the mark distribution.
+
+Anyway, we can see that the outcome the academic performance of test seems not correlated to emp test scores.
+This is also proved by the low Pearson correlation metric:
+
+```{r , warning=FALSE}
+attach(job2)
+
+c1<-round(cor(emp_test_percentage,ssc_percentage),3)
+c2<-round(cor(emp_test_percentage,hsc_percentage),3)
+c3<-round(cor(emp_test_percentage,degree_percentage),3)
+c4<-round(cor(emp_test_percentage, mba_percent),3)
+
+tab <- matrix(c(c1,c2,c3,c4), ncol=1, byrow=TRUE)
+colnames(tab) <- c("emp_test")
+rownames(tab) <- c("ssc_percentage:","hsc percentage:","degree_percentage:","mba_percentage:")
+tab <- as.table(tab)
+tab
+
+
+```
+
+Just to be sure, we look at the monotonic correlation with the Kendall method;
+
+```{r , warning=FALSE}
+c1<-round(cor(emp_test_percentage,ssc_percentage, method= 'kendall'),3)
+c2<-round(cor(emp_test_percentage,hsc_percentage, method= 'kendall'),3)
+c3<-round(cor(emp_test_percentage,degree_percentage, method= 'kendall'),3)
+c4<-round(cor(emp_test_percentage, mba_percent, method= 'kendall'),3)
+
+tab <- matrix(c(c1,c2,c3,c4), ncol=1, byrow=TRUE)
+colnames(tab) <- c("emp_test")
+rownames(tab) <- c("ssc_percentage:","hsc percentage:","degree_percentage:","mba_percentage:")
+tab <- as.table(tab)
+tab
+```
+
+In both the cases the correlation is confirmed to be really low.
+
+Let s do a correlation matrix for the academic test scores, only with Pearson method, since it is the one that depicts higher correlations.
+
+```{r }
+#take only the test scores varialbes
+job_percentages<-job[,-c(1,3,5,6,8,9,11,13,15)]
+```
+
+```{r }
+c<-cor(job_percentages)
+corrplot(c, method = "number",type = "upper")
+
+
+```
+
+We can see that the correlations among test points are all positives, and not so strong, we should so keep all the test scores for our models cause the correlation between them is not so high so every test could add something to the models.
+
+Now let s look at the scores divided by gender.
+For doing this we split the marks in low, medium and high and we look at the distribution between males and females.
+
+```{r ,results='hide'}
+cat_ssc<-cut(job2$ssc_percentage, breaks = c(0,50,80,100),labels = c("low", "medium", "high"))
+cat_hsc<-cut(job2$hsc_percentage, breaks = c(0,50,80,100),labels = c("low", "medium", "high"))
+cat_deg<-cut(job2$degree_percentage, breaks = c(0,50,80,100),labels = c("low", "medium", "high"))
+cat_emp<-cut(job2$emp_test_percentage, breaks = c(0,50,80,100),labels = c("low", "medium", "high"))
+cat_mba<-cut(job2$mba_percent, breaks = c(0,50,80,100),labels = c("low", "medium", "high"))
+
+plot_ssc<-ggplot(job2, aes(cat_ssc, fill=gender)) + geom_bar(position = "dodge")+labs(title = 'ssc marks by gender')
+plot_hsc<-ggplot(job2, aes(cat_hsc, fill=gender)) + geom_bar(position = "dodge")+labs(title = 'hsc marks by gender')
+plot_deg<-ggplot(job2, aes(cat_deg, fill=gender)) + geom_bar(position = "dodge")+labs(title = 'degree marks by gender')
+plot_emp<-ggplot(job2, aes(cat_emp, fill=gender)) + geom_bar(position = "dodge")+labs(title = 'emp test marks by gender')
+plot_mba<-ggplot(job2, aes(cat_mba, fill=gender)) + geom_bar(position = "dodge")+labs(title = 'mba marks by gender')
+```
+
+```{r }
+plot_scores_gender<-grid.arrange(plot_ssc,plot_hsc,plot_deg,plot_emp,plot_mba, ncol=2, nrow=3)
+
+```
+
+From these graphs we could deduct that in ssc females tend to have lower marks, while in the degree they have way higher marks than males.
+If we look at the emp test we see that no girls get a low mark, while in mba everyone has a medium mark.
+
+## 1.4 PCA
+
+Since we finished to plot our attributes singularly or in couples, in this part of our analysis, we would like to visualize our entire dataset.
+
+In order to do that, we need to reduce the number of attributes in our dataset, and plot them preserving the dataset structure.
+For obtaining this result we can try to apply a PCA.
+
+```{r}
+job.pca<- PCA(job2[numerical])
+```
+
+In the first graph, we can see the distribution of all our observations along the firsts two principal components, while in the second we look at the correlation between each numerical attribute and the two components.
+
+```{r}
+summary(job.pca)
+```
+
+```{r}
+var <- c(0.495, 0.1697, 0.1350, 0.1122, 0.08812)
+names.arg <- c("PC1", "PC2", "PC3", "PC4", "PC5")
+barplot(var, 
+        names.arg = names.arg, 
+        ylim = c(0, 0.7), 
+        main = "screeplot",
+        xlab = "Principal Components",
+        ylab = "Percentage of variances",
+        col = "steelblue")
+
+```
+
+As we can see by the cumulative proportion, the PCA is not really useful in our dataset because we can reduce the dimension only arriving at 4 dimensions, if we want to keep a discrete significativity, but this doesn t help us in plotting the data, for this reason, we decided not to use this model.
+
+## 1.4 Clustering
+
+At this point, we could try to divide our dataset in clusters, and, since the number of observations is not really high, we can try to use the hierarchical clustering method in order to find the appropriate number of clusters.
+
+Basing on the distribution of our observations we could chose even the k-means method, but, since the hierarchical clustering is simpler and easy to understand thanks to the visual representation, we preferred this technique.
+
+```{r}
+jobscaled<- scale(job2[numerical])
+jobdist<- dist(jobscaled)
+
+job.hc = hclust(jobdist)
+
+plot(job.hc, labels=FALSE)
+```
+
+From the dendrogram we can see that we can create two clusters.
+
+```{r}
+job.hc.2 = cutree(job.hc, 2)
+
+job.hc.2
+```
+
+```{r }
+
+job2$gender<- as.factor(job2$gender)
+job2$hsc_subject<- as.factor(job2$hsc_subject)
+job2$undergrad_degree<- as.factor(job2$undergrad_degree)
+job2$work_experience<- as.factor(job2$work_experience)
+job2$specialisation<- as.factor(job2$specialisation)
+job2$status<- as.factor(job2$status)
+```
+
+```{r }
+
+myshapes = c("M", "F")
+mycolors= c('cluster1', 'cluster2')
+colors<-mycolors[job.hc.2]
+shapes<-myshapes[as.integer(gender)]
+
+e<-qplot(ssc_percentage,hsc_percentage, data = job2, color = colors,pch=shapes)
+
+f<-qplot(hsc_percentage,degree_percentage, data = job2, color=colors, pch=shapes)
+
+g<-qplot(degree_percentage,emp_test_percentage, data = job2, color=colors,pch=shapes)
+
+h<-qplot(emp_test_percentage,mba_percent, data = job2, color=colors,pch=shapes)
+
+plot_mark1 = grid.arrange(e,f,g, h)
+
+
+```
+
+Looking at those scatterplots, it seems that the two clusters have been divided by the marks.
+
+We decided to aggregate them by status and see if this table could suggest us something.
+
+```{r, , warning=FALSE}
+cluster_means<-aggregate(job2, by=list(job.hc.2, job2$status), FUN = mean)
+#delete on numeric columns that are not computabule
+cm<-cluster_means[,-c(3,6,8,9,11,13)]
+cm
+
+```
+
+From here we can see that in both the clusters not placed people have a mark average lower than placed one.
+
+Now, we aggregate the clusters by gender:
+
+```{r,, warning=FALSE}
+cluster_gender_mean<-aggregate(job2, by=list(job.hc.2, job2$gender), FUN=mean)
+cgm<-cluster_gender_mean[,-c(3,6,8,9,11,13)]
+cgm
+```
+
+From this table we can see that in ssc and hsc females tent to be closest to the mean because in cluster one they have higher average than males, while in cluster two they have lower average.
+Instead, in degree and mba they always have a higher average than males.
+In the emp test we see that in cluster 1 females have lower marks, while in cluster two they are almost the same.
+
+We want even to look at placed and not placed males and females in both the clusters.
+
+```{r }
+head(job2)
+job_hc<- cbind(job2, job.hc.2)
+head(job2)
+```
+
+In cluster 1, that is the one with lower marks, we can see this:
+
+```{r }
+job_lowscores<- job_hc[job_hc$job.hc.2==1,]
+table(job_lowscores$gender,job_lowscores$status)
+```
+
+In cluster 2, that is the one with higher marks, this is the result instead:
+
+```{r }
+  
+job_highscores<- job_hc[job_hc$job.hc.2==2,]
+table(job_highscores$gender,job_highscores$status)
+```
+
+From those tables we can see that people with higher marks are almost always employed.
+
+## 2. Is there a gender gap in hiring?
+
+### 2.1 The Logistic Regression
+
+For answering this question we implemented a logistic regression.
+
+```{r, warning=FALSE}
+
+job2$status<- factor(job2$status)
+logistic<-glm(status~., data = job2, family = "binomial")
+huxreg("logistic model"= logistic)
+```
+
+In this first model we discover a statistically significant gender gap (95% confidence level).
+According to this model being a male on average leads to an increase of 12.5% (log(1.334)) in the probability of get the job placement.
+However, we note that the value of beta and confidence for the gender variable is the lowest of all significant factors, so further analysis are required to prove that we are really in front of a gender gap in placements.
+
+### 2.2 Evaluation of the Logistic Regression
+
+The Logistic regression cannot be evaluated by the R squared measure so we must find another way.
+The most straightforward way to evaluate what s the best logistic regression model to use for our analysis is the AIC (Akaike Information Criterion) that measures the residual deviance adjusted for the number of parameters.
+The absolute value is not important, the key is its variation: a model with a lower AIC is indeed better.
+Variations of two units are already a good result.
+For the first model with all the variables is 126.5, let s delete the not significant variable to see if we can improve this measure.
+
+```{r}
+#second model without the emp_test,specialization,undergrad e hsc subjects
+logistic2 <-glm(status~. -emp_test_percentage -specialisation- undergrad_degree -hsc_subject,data= job2, family = "binomial")
+#third model deleting also the gender
+logistic3 <-glm(status~. -gender -emp_test_percentage -specialisation- undergrad_degree -hsc_subject,data= job2, family = "binomial")
+
+huxreg("model1"=logistic ,"model2"= logistic2,"model3"=logistic3, statistics = "AIC")
+
+
+```
+
+The best model according to the AIC measure is the second one. However, we prefer the first model.
+We can see how the gender factor that was statistically significant in the first model becomes not statistically significant in the second. This change can be explained by the elimination of factors related to the subjects studied in the hsc, degree and specialization. 
+
+Why we choose the first model even if the AIC measure is worse? 
+We know that males are more present in technical subjects that lead to a greater chance of placement, so we cannot discard those factor to not fall in an omitted variable bias.
+Infact, in order to verify a "direct" gender gap in the likelihood of hiring, we need to verify that a woman is less likely to be hired while holding the other factors(score and subject of degrees) constant.
+For this reason the first model is better and we can say that there is a well-founded, if slight, suspicion of discrimination in the hiring process, which is also not totally verifiable given the small number of observations and the imbalance between the number of males and females.
+
+# 3. Can we create a predictive model for future candidates?
+
+## 3.1 Logistic Prediction
+
+We can use the previous logistic model to predict whether a student has been placed based on his or her gender, qualifications, test scores, and subjects of study.
+
+```{r, results='hide'}
+#divide the dataset in train set and test set
+nrow(job2)
+215*0.8
+#setseed to keep the same sample and therefore compare models
+set.seed(1)                            
+job.idx = sample(215, 172)
+
+job.train<-job2[job.idx,]
+job.test<- job2[-job.idx,]
+
+#Define status as numeric binomial variable with 1 = placed and 0 = not placed
+job.train$status <-ifelse(job.train$status=="Placed",1,0)
+job.test$status <-ifelse(job.test$status=="Placed",1,0)
+
+as.numeric(job.train$status)
+as.numeric(job.test$status)
+#train the logistic model
+logistic.fit <- glm(status~.  ,
+                    data = job.train,
+                    family = "binomial")
+#test the logistic model
+logistic.test<- predict(logistic.fit,
+                    newdata = job.test,
+                    type = "response")
+
+
+```
+
+```{r}
+#logistic accuracy
+logistic.pred <- ifelse(logistic.test > 0.5, "1", "0")
+
+t<-table(logistic.pred,job.test$status)
+logistic_accuracy= sum(diag(t)/sum(t))
+logistic_accuracy
+
+
+```
+
+The logistic model does not have such a good prediction so we can see if the decision tree can be more accurate.
+
+## 3.2 Decision Tree
+
+First at all, for building a decision tree, we need to split our dataset in training and tasting dataset, using the standard percentages of 80% of the observations for the training dataset, and 20% for the testing one.
+
+```{r }
+#same traiing and test data
+nrow(job2)
+215*0.8
+
+set.seed(1)                            
+job.idx = sample(215, 172)
+
+job.train<-job2[job.idx,]
+job.test<- job2[-job.idx,]
+```
+
+```{r }
+summary(job.train)
+```
+
+Looking at the summary of our training dataset, we see that the structure is not particularly changed from the original dataset, so we can accept this division as representative.
+
+Now, we can look at the decision tree that we can obtain from these data.
+
+```{r }
+job.dt.1 = rpart(status ~., data=job.train)
+rpart.plot(job.dt.1, extra=101)
+```
+
+Our tree seems to be too articulated and a bit confusing, but we should look if, at least, makes a good prediction of our testing dataset.
+
+```{r }
+job.predict = predict(job.dt.1, job.test, type='class')
+accuracy_table= table(job.test$status, job.predict)
+```
+
+```{r }
+accuracy= sum(diag(accuracy_table)/sum(accuracy_table))
+accuracy
+accuracy_table
+```
+
+As we can see, the accuracy is not really high, and we can also see the misclassifications in the table, especially we notice that our tree is not really good in predicting who will not be hired.
+
+## Improving the decision tree
+
+So, our decision tree does not perform well, but can definitely be improved.
+Looking at the plot, it is clear that the graph seems too complex and redundant, a simplification could lead to an improvement.
+In order to simplify the decision tree we can:
+
+1.  remove some variables that from previous analyses (EDA and Logistic regression ) emerge as not so important like emp_test percentage and hsc_subject
+
+2.  reduce the depth of the three to a maximum of tree "layers"
+
+```{r}
+#reduce the depth of the tree to max 3 "layers"
+control <- rpart.control(cp = 0, maxdepth = 3)
+#create the decision three
+job.dt.2 <- rpart(status~. -emp_test_percentage -hsc_subject  , data = job.train, method = 'class', control = control)
+rpart.plot(job.dt.2, extra=101)
+```
+
+Now the decision tree is more understandable and applies a more precise division.
+We can clearly see how academic career path affects the likelihood of being placed.
+The improvement seen in the graph s clarity is certified by the accuracy:
+
+```{r }
+#accuracy decision tree improved
+job.predict = predict(job.dt.2, job.test, type='class')
+
+prediction_table_impr= table(job.test$status, job.predict)
+
+acc_imp= sum(diag(prediction_table_impr)/sum(prediction_table_impr))
+acc_imp
+prediction_table_impr
+```
+
+Continuing to change the parameters does not improve the decision tree by much, so to make a final leap in the quality of prediction we decided to build a Random Forest.
+
+## 3.3 Random Forest
+
+```{r }
+#same training and test data
+nrow(job2)
+215*0.8
+
+set.seed(1)                                                 
+job.idx = sample(215, 172)
+
+job.train<-job2[job.idx,]
+job.test<- job2[-job.idx,]
+```
+
+```{r}
+#build the random forest
+as.numeric(job.train$status)
+job.rf = randomForest(status ~ ., data=job.train, ntree = 500)
+```
+
+```{r }
+#random forest accuracy
+job.rf.pred = predict(job.rf, job.test)
+
+forest_table=table(job.test$status, job.rf.pred)
+
+acc_forest= sum(diag(forest_table)/sum(forest_table))
+acc_forest
+```
+
+The random forest at the start performs better in the decision tree and logistic regression.
+This can be the best model for the placement prediction but there is still room for further improvements.
+
+## Improving the random forest
+
+As in the decision tree, we tried to improve the model by moving some parameters.
+Decreasing the number of variables, however, did not prove as useful as in the previous case.
+The winning path turned out to be changing the mtry parameter that controls how many of the input features a decision tree has available to consider during the bagging.
+
+```{r}
+#check the numbers of variables amd the out of bag error
+job.rf
+```
+
+Having 10 variables available, the mtry parameter can vary from 1 to 10.
+Through a for loop it is then possible to check them all and see which parameter minimizes the out of bag error(the model error on the prediction of data left out of the bootstrap sample that is used to train each single decision tree).
+
+```{r}
+oob.values<-vector(length=10)
+
+for(i in 1:10){
+  job.rf2 = randomForest(status ~.,
+                       data=job.train,
+                       mtry= i,
+                       ntree= 500)
+  oob.values[i]<-job.rf2$err.rate[nrow(job.rf2$err.rate),1]
+}
+oob.values
+```
+
+The second mtry is optimum so mtry= 2
+
+```{r , results="hide"}
+job.rf3 = randomForest(status ~.,
+                       data=job.train,
+                       mtry= 2,
+                       ntree= 500)
+```
+
+```{r}
+job.rf3.pred = predict(job.rf3, job.test)
+
+forest_table3 = table(job.test$status, job.rf3.pred)
+acc_forest3= sum(diag(forest_table3)/sum(forest_table3))
+acc_forest3
+```
+
+This Random forest has achieved good predictive ability and can therefore be a valuable tool for predicting a student s placement by knowing his test scores, subjects and gender.
+
+# Conclusion
+
+In the first part of this study we provided a descriptive analysis of student placement and its relationship to gender and school scores, managing to note through a cluster analysis how students with higher grades are also those who are more likely to be taken to work.
+
+In the second part we discovered that in the country we are considering (India, Bangladesh or Pakistan) there may be a gender gap in placements even if the data are not enough to clearly state it.
+
+Finally in the third part we try various methods to find the best predictive model of student placement,which turned out to be the "improved" random forest.
