@@ -1,4 +1,4 @@
-# Job-placement-predictor-and-gender-gap-analysis
+# Job placement predictor and gender gap analysis
 In this project we developed 3 research questions:
 
 1. How is the phenomenon structured?  
